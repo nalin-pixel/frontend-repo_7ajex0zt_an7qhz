@@ -3,9 +3,9 @@ import React, { useEffect, useRef } from 'react'
 // Ultra-premium cinematic shader canvas
 // - Flowing red-wine liquid background
 // - Matte-black bottle silhouette with subtle warm-gold rim light
-// - Slow, elegant motion
+// - Slow, elegant motion (tuned to be more visible)
 
-const vertexShader = `#version 100
+const vertexShader = `
 attribute vec2 a_position;
 void main(){
   gl_Position = vec4(a_position, 0.0, 1.0);
@@ -101,13 +101,14 @@ void main(){
   vec3 ruby = vec3(0.55, 0.05, 0.1);
 
   // Flowing wine background using advected fbm
-  float t = u_time * 0.06;
-  vec2 flowUV = p * 1.2;
+  // Increased speed and amplitude for clearer motion
+  float t = u_time * 0.18;
+  vec2 flowUV = p * 1.25;
   // Curl-like distortion
-  float n1 = fbm(flowUV + vec2(t*0.3, -t*0.15));
-  float n2 = fbm(flowUV*1.8 - vec2(t*0.1, t*0.25));
-  float swirl = fbm(flowUV + 1.5*n1*vec2(0.6, -0.4));
-  float depth = smoothstep(0.2, 0.9, swirl);
+  float n1 = fbm(flowUV + vec2(t*0.6, -t*0.3));
+  float n2 = fbm(flowUV*1.8 - vec2(t*0.25, t*0.45));
+  float swirl = fbm(flowUV + 1.8*n1*vec2(0.7, -0.5) + 0.7*n2);
+  float depth = smoothstep(0.15, 0.95, swirl);
   vec3 wine = mix(wineRed, ruby, depth);
   // Add cocoa shadows for cinematic depth
   wine = mix(darkCocoa, wine, 0.85);
@@ -126,8 +127,8 @@ void main(){
   vec2 g = vec2(sdBottle((p+e.xy)*1.05)-sdBottle((p-e.xy)*1.05), sdBottle((p+e.yx)*1.05)-sdBottle((p-e.yx)*1.05));
   vec2 n = normalize(g);
 
-  // Animated light direction to imply slow rotation
-  float ang = 1.2 + sin(u_time*0.25)*0.35;
+  // Animated light direction to imply slow rotation (slightly faster for visibility)
+  float ang = 1.2 + sin(u_time*0.5)*0.45;
   vec2 lightDir = normalize(vec2(cos(ang), sin(ang)));
 
   float ndotl = clamp(dot(-n, lightDir), 0.0, 1.0);
@@ -139,7 +140,7 @@ void main(){
   // Matte black base for bottle
   vec3 bottleBase = mix(deepBlack, darkCocoa, 0.2);
   // Subtle warm reflection
-  vec3 warmReflect = goldColor()*0.15*ndotl;
+  vec3 warmReflect = goldColor()*0.18*ndotl;
   vec3 bottleCol = bottleBase + warmReflect;
 
   // Composite: if inside bottle (d<0), render bottle with subtle gold rim
@@ -148,13 +149,17 @@ void main(){
     float core = smoothstep(0.0, -0.02, d);
     bottleCol *= mix(1.0, 0.85, core);
     // Add rim
-    bottleCol += rimCol*0.35;
+    bottleCol += rimCol*0.4;
     col = mix(col, bottleCol, 1.0);
   }
 
   // Soft bottle edge highlight to elevate premium feel
   float outline = smoothstep(0.0, edge, abs(d));
-  col = mix(col, col + goldColor()*0.08*(1.0-outline), 0.28);
+  col = mix(col, col + goldColor()*0.1*(1.0-outline), 0.3);
+
+  // Subtle pulsating highlight in the liquid for clearer motion
+  float pulse = 0.5 + 0.5*sin(u_time*0.6);
+  col += vec3(0.02, 0.003, 0.004) * pulse * (0.6 - smoothstep(0.5, 1.2, length(p)));
 
   // Final subtle film grain
   float grain = (hash(gl_FragCoord.xy + u_time) - 0.5)*0.02;
@@ -186,7 +191,7 @@ function createProgram(gl, vsSource, fsSource){
   gl.attachShader(program, vs)
   gl.attachShader(program, fs)
   gl.linkProgram(program)
-  if(!gl.getProgramParameter(program, gl.LINK_STATUS)){
+  if(!gl.getProgramParameter(program, gl.link_status || 0x8B82)){
     console.error('Program link error:', gl.getProgramInfoLog(program))
     gl.deleteProgram(program)
     return null
@@ -200,13 +205,24 @@ export default function HeroCanvas(){
 
   useEffect(() => {
     const canvas = canvasRef.current
+    if(!canvas) return
+
+    // Ensure the canvas always has layout size
+    const ensureSize = () => {
+      const parent = canvas.parentElement
+      if(parent){
+        if(parent.clientHeight < 200){
+          parent.style.minHeight = '60vh'
+        }
+      }
+    }
+
     const gl = canvas.getContext('webgl', { antialias: true, premultipliedAlpha: false })
     if(!gl){
       console.warn('WebGL not supported')
       return
     }
 
-    // Setup
     const program = createProgram(gl, vertexShader, fragmentShader)
     if(!program) return
     gl.useProgram(program)
@@ -231,9 +247,10 @@ export default function HeroCanvas(){
     gl.vertexAttribPointer(a_position, 2, gl.FLOAT, false, 0, 0)
 
     const resize = () => {
+      ensureSize()
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
-      const w = canvas.clientWidth
-      const h = canvas.clientHeight
+      const w = canvas.clientWidth || window.innerWidth
+      const h = canvas.clientHeight || window.innerHeight
       const W = Math.max(1, Math.floor(w * dpr))
       const H = Math.max(1, Math.floor(h * dpr))
       if(canvas.width !== W || canvas.height !== H){
